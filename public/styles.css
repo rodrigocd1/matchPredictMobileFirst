@@ -296,6 +296,10 @@ body {
     padding: 0;
 }
 
+.analysis-overlay[hidden] {
+    display: none !important;
+}
+
 .analysis-panel {
     width: min(100%, 430px);
     max-height: calc(100vh - 40px);

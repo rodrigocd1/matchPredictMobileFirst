@@ -1,4 +1,4 @@
-﻿const staticCacheName = 'match-predict-static-v4';
+const staticCacheName = 'match-predict-static-v5';
 const applicationShellFiles = [
     '/',
     '/index.html',
@@ -36,3 +36,4 @@ self.addEventListener('fetch', (fetchEvent) => {
         })
     );
 });
+
