@@ -1,0 +1,83 @@
+﻿<!doctype html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#14245e">
+    <title>Partidas | Match Predict</title>
+    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="icon" href="/icons/icon-192.png" sizes="192x192" type="image/png">
+    <link rel="apple-touch-icon" href="/icons/icon-192.png">
+    <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+    <div class="status-strip" aria-hidden="true"></div>
+
+    <main class="matches-shell">
+        <section class="matches-hero">
+            <header class="hero-header">
+                <h1>Partidas</h1>
+            </header>
+
+            <label class="search-box" for="matchSearchInput">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M10.5 3.75a6.75 6.75 0 1 0 4.246 11.997l4.253 4.253a.75.75 0 1 0 1.06-1.06l-4.253-4.254A6.75 6.75 0 0 0 10.5 3.75Zm0 1.5a5.25 5.25 0 1 1 0 10.5 5.25 5.25 0 0 1 0-10.5Z" />
+                </svg>
+                <input id="matchSearchInput" type="search" placeholder="Buscar partida..." autocomplete="off">
+            </label>
+
+            <div id="leagueChips" class="league-chips" role="tablist" aria-label="Filtros por liga"></div>
+        </section>
+
+        <section id="matchesList" class="matches-list" aria-live="polite"></section>
+    </main>
+
+    <section id="analysisOverlay" class="analysis-overlay" hidden>
+        <div id="analysisPanel" class="analysis-panel" role="dialog" aria-modal="true" aria-labelledby="analysisTitle">
+            <header class="analysis-header">
+                <h2 id="analysisTitle">Analise completa</h2>
+                <button id="analysisCloseButton" class="analysis-close" type="button" aria-label="Fechar analise">
+                    &times;
+                </button>
+            </header>
+
+            <p id="analysisSubtitle" class="analysis-subtitle"></p>
+
+            <section class="analysis-block">
+                <h3>Base de jogos e resultados</h3>
+                <div id="gamesBaseContainer" class="analysis-list"></div>
+            </section>
+
+            <section class="analysis-block">
+                <h3>Resumo agrupado por time</h3>
+                <div id="teamSummaryContainer" class="analysis-list"></div>
+            </section>
+        </div>
+    </section>
+
+    <nav class="bottom-nav" aria-label="Menu principal">
+        <button class="nav-item" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-5v-6h-4v6H5a1 1 0 0 1-1-1v-9.5Z"/></svg>
+            <span>Inicio</span>
+        </button>
+        <button class="nav-item active" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 4a1 1 0 0 0-1 1v2H3.8a1 1 0 0 0-.8 1.6l3.5 4.7-.9 5.8a1 1 0 0 0 1.5 1l4.9-2.8 4.9 2.8a1 1 0 0 0 1.5-1l-.9-5.8 3.5-4.7a1 1 0 0 0-.8-1.6h-3.7V5a1 1 0 1 0-2 0v2h-3V5a1 1 0 0 0-1-1h-1Z"/></svg>
+            <span>Jogos</span>
+        </button>
+        <button class="nav-item" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l5 5v13a1 1 0 0 1-1 1H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Zm8 1v5h5"/></svg>
+            <span>Relatorios</span>
+        </button>
+        <button class="nav-item" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 4.5 2.32 4.7 5.18.75-3.75 3.65.88 5.16L12 16.32 7.37 18.76l.88-5.16L4.5 9.95l5.18-.75L12 4.5Z"/></svg>
+            <span>Favoritos</span>
+        </button>
+        <button class="nav-item" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a4.25 4.25 0 1 0 0-8.5 4.25 4.25 0 0 0 0 8.5Zm0 2c-4.2 0-7.5 2.84-7.5 6.25a.75.75 0 0 0 1.5 0c0-2.43 2.5-4.75 6-4.75s6 2.32 6 4.75a.75.75 0 0 0 1.5 0C19.5 16.84 16.2 14 12 14Z"/></svg>
+            <span>Perfil</span>
+        </button>
+    </nav>
+
+    <script type="module" src="/app.js"></script>
+</body>
+</html>
