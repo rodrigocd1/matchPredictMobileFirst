@@ -1,0 +1,258 @@
+# =============================================================================
+#  .github/workflows/commit-message-lint.yml
+#
+#  Valida o padrao da mensagem de commit no servidor GitHub.
+#  Atua como segunda camada de protecao (apos o hook local).
+#
+#  Formato obrigatorio:
+#    [TICKET-NNN]-tipo-Descricao com pelo menos tres palavras
+#
+#  Exemplos validos:
+#    [DRB-001]-feat-New Class Sound Cars
+#    [ABC-042]-fix-Corrige bug no calculo de imposto
+#
+#  Autor   : Code Quality Guardian
+#  Versao  : 1.0.0
+# =============================================================================
+
+name: "📝 Commit Message Lint"
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+    branches:
+      - "**"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-commit-messages:
+    name: "Lint — Commit Messages"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+
+      # ── 1. Checkout ───────────────────────────────────────────────────
+      - name: "📥 Checkout"
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0    # Necessario para acessar historico de commits
+
+      # ── 2. Definir commits a validar ──────────────────────────────────
+      - name: "🔎 Identificar commits do evento"
+        id: commits
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            # PR: todos os commits entre a base e o HEAD
+            BASE="${{ github.event.pull_request.base.sha }}"
+            HEAD="${{ github.event.pull_request.head.sha }}"
+            COMMITS=$(git log --pretty=format:"%H" "${BASE}..${HEAD}")
+          else
+            # Push direto: somente o commit atual
+            # Se for o primeiro commit do repositorio, usa apenas o HEAD
+            if git rev-parse HEAD^ > /dev/null 2>&1; then
+              COMMITS="${{ github.sha }}"
+            else
+              COMMITS="${{ github.sha }}"
+            fi
+          fi
+
+          echo "Lista de commits a validar:"
+          echo "${COMMITS}"
+
+          # Salva em arquivo para o proximo step
+          echo "${COMMITS}" > /tmp/commits_to_validate.txt
+          TOTAL=$(echo "${COMMITS}" | grep -c . || true)
+          echo "total=${TOTAL}" >> "$GITHUB_OUTPUT"
+
+      # ── 3. Validar cada mensagem de commit ────────────────────────────
+      - name: "✅ Validar mensagens de commit"
+        id: validate
+        run: |
+          # ── Padrao e tipos permitidos ──────────────────────────────────
+          ALLOWED_TYPES="feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert|hotfix|release"
+          PATTERN="^\[[A-Z]+-[0-9]+\]-(${ALLOWED_TYPES})-.{10,}$"
+
+          FAILED=0
+          FAILED_COMMITS=""
+          PASSED=0
+
+          echo "======================================================"
+          echo "  Padrao exigido:"
+          echo "  [TICKET-NNN]-tipo-Descricao com pelo menos 10 chars"
+          echo "======================================================"
+          echo ""
+
+          while IFS= read -r COMMIT_SHA; do
+            [ -z "${COMMIT_SHA}" ] && continue
+
+            # Mensagem do commit (apenas a primeira linha)
+            MSG=$(git log --format="%s" -n 1 "${COMMIT_SHA}")
+            SHORT="${COMMIT_SHA:0:7}"
+
+            # Ignora commits automaticos do Git
+            SKIP=false
+            for AUTO in "Merge branch" "Merge pull request" "Merge remote" \
+                        "Revert " "fixup!" "squash!"; do
+              if [[ "${MSG}" == ${AUTO}* ]]; then
+                echo "  ⏭️  [${SHORT}] IGNORADO (commit automatico): ${MSG}"
+                SKIP=true
+                break
+              fi
+            done
+            [ "$SKIP" = "true" ] && continue
+
+            # Valida contra o padrao
+            if echo "${MSG}" | grep -qE "${PATTERN}"; then
+              echo "  ✅  [${SHORT}] OK: ${MSG}"
+              PASSED=$(( PASSED + 1 ))
+            else
+              echo "  ❌  [${SHORT}] INVALIDO: ${MSG}"
+              FAILED=$(( FAILED + 1 ))
+              FAILED_COMMITS="${FAILED_COMMITS}|${SHORT}:::${MSG}"
+            fi
+
+          done < /tmp/commits_to_validate.txt
+
+          echo ""
+          echo "======================================================"
+          echo "  Aprovados : ${PASSED}"
+          echo "  Reprovados: ${FAILED}"
+          echo "======================================================"
+
+          # Exporta para steps seguintes
+          echo "passed=${PASSED}"               >> "$GITHUB_OUTPUT"
+          echo "failed=${FAILED}"               >> "$GITHUB_OUTPUT"
+          echo "failed_commits=${FAILED_COMMITS}" >> "$GITHUB_OUTPUT"
+
+          if [ "${FAILED}" -gt 0 ]; then
+            echo ""
+            echo "  Formato correto: [DRB-001]-feat-Descricao longa aqui"
+            echo "  Tipos validos  : feat fix docs style refactor perf"
+            echo "                   test build ci chore revert hotfix release"
+            exit 1
+          fi
+
+      # ── 4. Sumario na aba Summary do GitHub ───────────────────────────
+      - name: "📊 Publicar sumário"
+        if: always()
+        run: |
+          FAILED="${{ steps.validate.outputs.failed }}"
+          PASSED="${{ steps.validate.outputs.passed }}"
+          FAILED_COMMITS="${{ steps.validate.outputs.failed_commits }}"
+
+          if [ "${{ steps.validate.outcome }}" = "success" ]; then
+            STATUS_ICON="✅"
+            STATUS_TEXT="Todas as mensagens estão no padrão"
+          elif [ "${{ steps.validate.outcome }}" = "skipped" ]; then
+            STATUS_ICON="⏭️"
+            STATUS_TEXT="Validação não executada"
+          else
+            STATUS_ICON="❌"
+            STATUS_TEXT="Mensagem(ns) fora do padrão"
+          fi
+
+          cat >> "$GITHUB_STEP_SUMMARY" << SUMMARY
+          ## ${STATUS_ICON} Commit Message Lint — ${STATUS_TEXT}
+
+          | Campo         | Valor |
+          |---------------|-------|
+          | **Commit**    | \`${{ github.sha }}\` |
+          | **Branch**    | \`${{ github.ref_name }}\` |
+          | **Autor**     | ${{ github.actor }} |
+          | **Aprovados** | ${PASSED:-0} |
+          | **Reprovados**| ${FAILED:-0} |
+
+          ### Formato obrigatório
+          \`\`\`
+          [TICKET-NNN]-tipo-Descricao com pelo menos 10 caracteres
+          \`\`\`
+
+          **Exemplos válidos:**
+          \`\`\`
+          [DRB-001]-feat-New Class Sound Cars
+          [ABC-042]-fix-Corrige bug no calculo de imposto
+          [PROJ-99]-ci-Adiciona validacao no pipeline de qualidade
+          \`\`\`
+
+          **Tipos semânticos aceitos:**
+          \`feat\` \`fix\` \`docs\` \`style\` \`refactor\` \`perf\` \`test\` \`build\` \`ci\` \`chore\` \`revert\` \`hotfix\` \`release\`
+          SUMMARY
+
+      # ── 5. Comentario no Pull Request ─────────────────────────────────
+      - name: "💬 Comentar no PR"
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const outcome      = '${{ steps.validate.outcome }}';
+            const failed       = parseInt('${{ steps.validate.outputs.failed }}' || '0');
+            const passed       = parseInt('${{ steps.validate.outputs.passed }}' || '0');
+            const failedRaw    = '${{ steps.validate.outputs.failed_commits }}';
+            const sha          = context.sha.substring(0, 7);
+            const runUrl       = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+
+            let icon, title, detail;
+
+            if (outcome === 'success') {
+              icon  = '✅';
+              title = 'Mensagens de commit aprovadas';
+              detail = `Todos os **${passed}** commit(s) estão no padrão exigido.`;
+            } else {
+              icon  = '❌';
+              title = 'Mensagens de commit fora do padrão';
+
+              // Monta lista dos commits reprovados
+              let list = '';
+              if (failedRaw) {
+                const entries = failedRaw.split('|').filter(e => e.includes(':::'));
+                for (const entry of entries) {
+                  const [sha7, msg] = entry.split(':::');
+                  list += `- \`${sha7}\` → \`${msg}\`\n`;
+                }
+              }
+
+              detail = `**${failed}** commit(s) reprovado(s):\n${list}\n` +
+                `**Formato correto:**\n\`\`\`\n[TICKET-NNN]-tipo-Descricao longa aqui\n\`\`\`\n\n` +
+                `**Tipos aceitos:** \`feat\` \`fix\` \`docs\` \`style\` \`refactor\` \`perf\` \`test\` \`build\` \`ci\` \`chore\` \`revert\` \`hotfix\` \`release\``;
+            }
+
+            const body = `## ${icon} Commit Message Lint — ${title}
+
+            ${detail}
+
+            | Commit | Branch | Autor |
+            |--------|--------|-------|
+            | \`${sha}\` | \`${{ github.head_ref }}\` | @${{ github.actor }} |
+
+            > [Ver execução completa](${runUrl})`;
+
+            // Atualiza comentario existente para nao gerar spam
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const prev = comments.find(c =>
+              c.user.type === 'Bot' && c.body.includes('Commit Message Lint')
+            );
+            if (prev) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                comment_id: prev.id, body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: context.issue.number, body,
+              });
+            }
