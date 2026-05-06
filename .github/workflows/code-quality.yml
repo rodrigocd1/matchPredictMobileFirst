@@ -1,0 +1,330 @@
+# =============================================================================
+#  .github/workflows/code-quality.yml
+#
+#  Universal Code Validator — GitHub Actions
+#  Executa o validador de qualidade em cada commit e Pull Request.
+#
+#  Comportamento:
+#    - Roda em todo push para qualquer branch
+#    - Roda em toda abertura / atualizacao de Pull Request
+#    - Analisa apenas os arquivos ALTERADOS no commit (diff-aware)
+#    - Falha o build se qualquer violacao for encontrada (fail-fast)
+#    - Publica o log como artefato para download na aba Actions
+#    - Exibe um sumario visual diretamente na aba Summary do workflow
+#
+#  Autor   : Code Quality Guardian
+#  Versao  : 2.0.0
+# =============================================================================
+
+name: "🔍 Code Quality Validator"
+
+on:
+  push:
+    branches:
+      - "**"                        # Todos os branches
+  pull_request:
+    branches:
+      - "**"                        # Todo PR independente do branch alvo
+
+# Cancela execucoes anteriores do mesmo branch/PR ao receber novo push
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: "Validate — ${{ github.event_name }} @ ${{ github.ref_name }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    # ── Permissoes minimas necessarias ──────────────────────────────────────
+    permissions:
+      contents: read          # Leitura do repositorio
+      pull-requests: write    # Comentario no PR com o resumo
+
+    steps:
+
+      # ── 1. Checkout do codigo ──────────────────────────────────────────
+      - name: "📥 Checkout do repositório"
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0        # Historico completo para o diff funcionar
+
+      # ── 2. Python ─────────────────────────────────────────────────────
+      - name: "🐍 Configurar Python 3.11"
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      # ── 3. Instalar dependencias (stdlib apenas — sem pip install) ────
+      - name: "📦 Verificar dependencias"
+        run: |
+          python -c "import re, sys, abc, dataclasses, enum, pathlib, \
+                            json, logging, os, platform, socket, time, \
+                            traceback, uuid, functools; print('OK')"
+
+      # ── 4. Copiar os scripts do validador para o runner ───────────────
+      #
+      #  Os 3 arquivos abaixo DEVEM estar no repositorio em:
+      #    tools/validator/code_validator.py
+      #    tools/validator/validator_logger.py
+      #    tools/validator/run_validator.sh
+      #
+      - name: "🔧 Preparar scripts do validador"
+        run: |
+          chmod +x tools/validator/run_validator.sh
+          python -c "import sys; sys.path.insert(0,'tools/validator'); \
+                     import validator_logger; print('Logger OK')"
+
+      # ── 5. Identificar arquivos alterados no commit ────────────────────
+      - name: "🔎 Detectar arquivos alterados"
+        id: changed
+        run: |
+          # Para push: diff entre o commit anterior e o atual
+          # Para PR   : diff entre a base e o HEAD do PR
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+            HEAD="${{ github.event.pull_request.head.sha }}"
+          else
+            BASE="${{ github.event.before }}"
+            HEAD="${{ github.sha }}"
+          fi
+
+          # Lista arquivos alterados/adicionados (exclui deletados)
+          EXTENSIONS=".java .js .ts .cs .cpp .c .h .hpp .apex .cls .py .kt .swift"
+          CHANGED_FILES=""
+
+          for EXT in $EXTENSIONS; do
+            FILES=$(git diff --name-only --diff-filter=ACMR \
+                    "${BASE}" "${HEAD}" -- "*${EXT}" 2>/dev/null || true)
+            if [ -n "$FILES" ]; then
+              CHANGED_FILES="${CHANGED_FILES} ${FILES}"
+            fi
+          done
+
+          # Remove espacos extras e normaliza
+          CHANGED_FILES=$(echo "${CHANGED_FILES}" | xargs)
+
+          if [ -z "${CHANGED_FILES}" ]; then
+            echo "Nenhum arquivo de codigo alterado neste commit."
+            echo "has_files=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Arquivos encontrados: ${CHANGED_FILES}"
+            echo "has_files=true"      >> "$GITHUB_OUTPUT"
+            # Salva lista em arquivo para o proximo step
+            echo "${CHANGED_FILES}" | tr ' ' '\n' > /tmp/changed_files.txt
+            cat /tmp/changed_files.txt
+          fi
+
+      # ── 6. Executar validador em cada arquivo alterado ─────────────────
+      - name: "🔍 Executar validacao de qualidade"
+        id: validator
+        if: steps.changed.outputs.has_files == 'true'
+        env:
+          VALIDATOR_AUTHOR: "${{ github.actor }}"
+          VALIDATOR_LOG_KEEP: "20"
+          NO_COLOR: "1"             # Sem ANSI no log do Actions
+        run: |
+          cd tools/validator
+
+          TOTAL_VIOLATIONS=0
+          TOTAL_FILES=0
+          ABORTED_RULE=""
+          FAILED_FILES=""
+
+          # Cria diretorio de logs
+          mkdir -p logs
+
+          echo "======================================================"
+          echo "  Commit   : ${{ github.sha }}"
+          echo "  Autor    : ${{ github.actor }}"
+          echo "  Branch   : ${{ github.ref_name }}"
+          echo "  Data/Hora: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "======================================================"
+          echo ""
+
+          while IFS= read -r FILE; do
+            [ -z "$FILE" ] && continue
+            FILE_PATH="../../${FILE}"
+
+            if [ ! -f "${FILE_PATH}" ]; then
+              echo "[SKIP] Arquivo nao encontrado (pode ter sido renomeado): ${FILE}"
+              continue
+            fi
+
+            echo "------------------------------------------------------"
+            echo "  Arquivo : ${FILE}"
+            echo "------------------------------------------------------"
+
+            EXIT_CODE=0
+            python code_validator.py "${FILE_PATH}" || EXIT_CODE=$?
+
+            TOTAL_FILES=$(( TOTAL_FILES + 1 ))
+
+            if [ "${EXIT_CODE}" -ne 0 ]; then
+              TOTAL_VIOLATIONS=$(( TOTAL_VIOLATIONS + 1 ))
+              FAILED_FILES="${FAILED_FILES}\n  ❌  ${FILE}"
+              # Captura qual regra abortou (ultima linha do log com ABORTADO)
+              LATEST_LOG=$(ls -t logs/validator_*.log 2>/dev/null | head -1 || echo "")
+              if [ -n "$LATEST_LOG" ]; then
+                RULE=$(grep "PIPELINE CANCELADO\|Pipeline cancelado\|ABORTADO" \
+                       "$LATEST_LOG" 2>/dev/null | tail -1 || echo "")
+                if [ -n "$RULE" ]; then
+                  ABORTED_RULE="${RULE}"
+                fi
+              fi
+            fi
+
+            echo ""
+          done < /tmp/changed_files.txt
+
+          # Exporta variaveis para o sumario
+          echo "total_files=${TOTAL_FILES}"       >> "$GITHUB_OUTPUT"
+          echo "total_violations=${TOTAL_VIOLATIONS}" >> "$GITHUB_OUTPUT"
+          echo "failed_files=${FAILED_FILES}"     >> "$GITHUB_OUTPUT"
+
+          # Falha o step se houver violacoes
+          if [ "${TOTAL_VIOLATIONS}" -gt 0 ]; then
+            echo ""
+            echo "======================================================"
+            echo "  RESULTADO: REPROVADO"
+            echo "  ${TOTAL_VIOLATIONS} arquivo(s) com violacoes de qualidade."
+            echo "======================================================"
+            exit 1
+          else
+            echo ""
+            echo "======================================================"
+            echo "  RESULTADO: APROVADO ✅"
+            echo "  ${TOTAL_FILES} arquivo(s) validado(s) sem violacoes."
+            echo "======================================================"
+            exit 0
+          fi
+
+      # ── 7. Nenhum arquivo relevante alterado ──────────────────────────
+      - name: "⏭️ Nenhum arquivo de código alterado"
+        if: steps.changed.outputs.has_files == 'false'
+        run: |
+          echo "Nenhum arquivo de codigo-fonte foi alterado neste commit."
+          echo "Validacao ignorada."
+
+      # ── 8. Upload dos logs como artefato ──────────────────────────────
+      - name: "📤 Upload dos logs de validacao"
+        if: always()                # Roda mesmo se o step anterior falhou
+        uses: actions/upload-artifact@v4
+        with:
+          name: "validator-logs-${{ github.run_number }}-${{ github.sha }}"
+          path: |
+            tools/validator/logs/validator_*.log
+            tools/validator/logs/validator_*.json
+            tools/validator/logs/shell_*.log
+          retention-days: 30
+          if-no-files-found: ignore
+
+      # ── 9. Sumario visual na aba Summary do GitHub ────────────────────
+      - name: "📊 Publicar sumário no GitHub"
+        if: always()
+        run: |
+          STATUS_ICON="✅"
+          STATUS_TEXT="APROVADO"
+          if [ "${{ steps.validator.outcome }}" = "failure" ]; then
+            STATUS_ICON="❌"
+            STATUS_TEXT="REPROVADO — violações encontradas"
+          elif [ "${{ steps.changed.outputs.has_files }}" = "false" ]; then
+            STATUS_ICON="⏭️"
+            STATUS_TEXT="IGNORADO — nenhum arquivo de código alterado"
+          fi
+
+          cat >> "$GITHUB_STEP_SUMMARY" << SUMMARY
+          ## ${STATUS_ICON} Code Quality Validator — ${STATUS_TEXT}
+
+          | Campo            | Valor |
+          |------------------|-------|
+          | **Commit**       | \`${{ github.sha }}\` |
+          | **Branch**       | \`${{ github.ref_name }}\` |
+          | **Autor**        | ${{ github.actor }} |
+          | **Evento**       | ${{ github.event_name }} |
+          | **Data/Hora**    | $(date '+%Y-%m-%d %H:%M:%S UTC') |
+          | **Run**          | [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) |
+
+          ### Regras verificadas
+          | ID   | Regra                                  |
+          |------|----------------------------------------|
+          | R01  | Método com mais de 3 parâmetros        |
+          | R02  | Parâmetro sem validação de null        |
+          | R03  | Query fora de classe DAO               |
+          | R04  | Número mágico                          |
+          | R05  | String mágica                          |
+          | R06  | Variável com nome muito longo (> 30)   |
+          | R07  | Variável com nome muito curto (1–4)    |
+          | R08  | For encadeado (≥ 3 níveis)             |
+          | R09  | If encadeado (≥ 3 níveis)              |
+          | R10  | Query dentro de laço                   |
+
+          > 📦 Os logs completos estão disponíveis como **artefatos** desta execução (retidos por 30 dias).
+          SUMMARY
+
+      # ── 10. Comentario no Pull Request ───────────────────────────────
+      - name: "💬 Comentar resultado no PR"
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const outcome  = '${{ steps.validator.outcome }}';
+            const hasFiles = '${{ steps.changed.outputs.has_files }}';
+            const sha      = context.sha.substring(0, 7);
+            const runUrl   = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+
+            let icon, title, body;
+
+            if (hasFiles === 'false') {
+              icon  = '⏭️';
+              title = 'Nenhum arquivo de código alterado';
+              body  = 'A validação foi ignorada pois nenhum arquivo de código-fonte foi modificado neste PR.';
+            } else if (outcome === 'success') {
+              icon  = '✅';
+              title = 'Validação aprovada';
+              body  = 'Todos os arquivos alterados passaram nas 10 regras de qualidade.\nNenhuma refatoração necessária.';
+            } else {
+              icon  = '❌';
+              title = 'Violações encontradas — merge bloqueado';
+              body  = `Um ou mais arquivos alterados violam as regras de qualidade.\n\nO pipeline foi interrompido na primeira regra com falha (**fail-fast**).\n\nConsulte os [logs da execução](${runUrl}) para detalhes.`;
+            }
+
+            const comment = `## ${icon} Code Quality Validator — ${title}
+
+            ${body}
+
+            | Commit | Branch | Executor |
+            |--------|--------|----------|
+            | \`${sha}\` | \`${{ github.head_ref }}\` | @${{ github.actor }} |
+
+            > _Gerado automaticamente pelo [Universal Code Validator](${runUrl})_`;
+
+            // Busca comentario anterior do bot para atualizar (evita spam)
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const previous = comments.find(c =>
+              c.user.type === 'Bot' &&
+              c.body.includes('Code Quality Validator')
+            );
+
+            if (previous) {
+              await github.rest.issues.updateComment({
+                owner:      context.repo.owner,
+                repo:       context.repo.repo,
+                comment_id: previous.id,
+                body:       comment,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner:       context.repo.owner,
+                repo:        context.repo.repo,
+                issue_number: context.issue.number,
+                body:         comment,
+              });
+            }
