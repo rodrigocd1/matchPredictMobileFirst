@@ -1,0 +1,23 @@
+# Formato obrigatório: [TICKET-NNN]-tipo-Descrição longa aqui
+# ─────────────────────────────────────────────────────────────
+# Exemplos:
+#   [DRB-001]-feat-New Class Sound Cars
+#   [ABC-042]-fix-Corrige bug no calculo de imposto
+#   [PROJ-99]-ci-Adiciona validacao no pipeline de qualidade
+#
+# Tipos aceitos:
+#   feat     → Nova funcionalidade
+#   fix      → Correção de bug
+#   docs     → Documentação
+#   style    → Formatação sem mudança de lógica
+#   refactor → Refatoração sem nova feature
+#   perf     → Melhoria de performance
+#   test     → Testes
+#   build    → Sistema de build / dependências
+#   ci       → Arquivos de CI/CD
+#   chore    → Manutenção geral
+#   revert   → Reversão de commit
+#   hotfix   → Correção crítica em produção
+#   release  → Preparação de release
+# ─────────────────────────────────────────────────────────────
+[TICKET-NNN]-tipo-
