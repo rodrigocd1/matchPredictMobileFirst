@@ -66,14 +66,14 @@ jobs:
       # ── 4. Copiar os scripts do validador para o runner ───────────────
       #
       #  Os 3 arquivos abaixo DEVEM estar no repositorio em:
-      #    tools/validator/code_validator.py
-      #    tools/validator/validator_logger.py
-      #    tools/validator/run_validator.sh
+      #    scripts/code_validator.py
+      #    scripts//validator_logger.py
+      #    scripts/run_validator.sh
       #
       - name: "🔧 Preparar scripts do validador"
         run: |
-          chmod +x tools/validator/run_validator.sh
-          python -c "import sys; sys.path.insert(0,'tools/validator'); \
+          chmod +x scripts/run_validator.sh
+          python -c "import sys; sys.path.insert(0,'scripts/'); \
                      import validator_logger; print('Logger OK')"
 
       # ── 5. Identificar arquivos alterados no commit ────────────────────
@@ -214,9 +214,9 @@ jobs:
         with:
           name: "validator-logs-${{ github.run_number }}-${{ github.sha }}"
           path: |
-            tools/validator/logs/validator_*.log
-            tools/validator/logs/validator_*.json
-            tools/validator/logs/shell_*.log
+            scripts/logs/validator_*.log
+            scripts/logs/validator_*.json
+            scripts/logs/shell_*.log
           retention-days: 30
           if-no-files-found: ignore
 
